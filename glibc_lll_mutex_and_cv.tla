@@ -412,14 +412,14 @@ cv_wait_loop:
       goto cv_wait_outer_loop_done;
     } (* the else case of setting signals := futexes[g_signals_index[g]] is handled at the top of the loop *);
   };
-cv_wait_outer_loop_done: skip;
-(*  local_g1_start := g1_start;
+cv_wait_outer_loop_done:
+  local_g1_start := g1_start;
   if (seq < (g1_start \div 2) /\ (local_g1_start % 2) /= g)
   {
   cv_wait_potential_steal:
     if (UsePatch)
     {
-      call cv_signal();
+      call cv_broadcast();
     }
     else
     {
@@ -446,7 +446,7 @@ cv_wait_outer_loop_done: skip;
   cv_wait_after_steal_wake:
     call futex_wake_single(g_signals_index[g]);
     };
-  };*)
+  };
   
 cv_wait_done:
       if (AlwaysSetGRefs)
@@ -589,16 +589,6 @@ notify_worker:
   return;
 }
 
-(*fair process (WorkerProc \in Procs)
-{
-    start:- while (TRUE)
-    {
-      call lock_mutex();
-      cs: skip;
-      call unlock_mutex();
-      ncs: either skip or goto ncs;
-    }
-}*)
 fair process (WorkerProc \in WorkerProcs)
 {
     start: while (TRUE)
@@ -653,19 +643,19 @@ variable num_loops = MaxNumLoops;
 }
 *)
 
-\* BEGIN TRANSLATION
-\* Label futex_wake_all of procedure futex_wake_all at line 80 col 5 changed to futex_wake_all_
-\* Label futex_wait of procedure lock_mutex at line 121 col 9 changed to futex_wait_
-\* Label check_for_waiters of procedure cv_signal at line 466 col 3 changed to check_for_waiters_
-\* Procedure variable old_state of procedure lock_mutex at line 85 col 10 changed to old_state_
-\* Procedure variable old_state of procedure unlock_mutex at line 127 col 10 changed to old_state_u
-\* Procedure variable local_wseq of procedure cv_wait at line 321 col 11 changed to local_wseq_
-\* Procedure variable g of procedure cv_wait at line 322 col 11 changed to g_
-\* Procedure variable local_wseq of procedure cv_signal at line 461 col 11 changed to local_wseq_c
-\* Procedure variable g1 of procedure cv_signal at line 462 col 11 changed to g1_
-\* Procedure variable do_futex_wake of procedure cv_signal at line 463 col 11 changed to do_futex_wake_
-\* Procedure variable local_wseq of procedure cv_broadcast at line 514 col 11 changed to local_wseq_cv
-\* Procedure variable g1 of procedure cv_broadcast at line 515 col 11 changed to g1_c
+\* BEGIN TRANSLATION (chksum(pcal) = "d23529ee" /\ chksum(tla) = "dd5e5254")
+\* Label futex_wake_all of procedure futex_wake_all at line 89 col 5 changed to futex_wake_all_
+\* Label futex_wait of procedure lock_mutex at line 130 col 9 changed to futex_wait_
+\* Label check_for_waiters of procedure cv_signal at line 475 col 3 changed to check_for_waiters_
+\* Procedure variable old_state of procedure lock_mutex at line 94 col 10 changed to old_state_
+\* Procedure variable old_state of procedure unlock_mutex at line 136 col 10 changed to old_state_u
+\* Procedure variable local_wseq of procedure cv_wait at line 330 col 11 changed to local_wseq_
+\* Procedure variable g of procedure cv_wait at line 331 col 11 changed to g_
+\* Procedure variable local_wseq of procedure cv_signal at line 470 col 11 changed to local_wseq_c
+\* Procedure variable g1 of procedure cv_signal at line 471 col 11 changed to g1_
+\* Procedure variable do_futex_wake of procedure cv_signal at line 472 col 11 changed to do_futex_wake_
+\* Procedure variable local_wseq of procedure cv_broadcast at line 523 col 11 changed to local_wseq_cv
+\* Procedure variable g1 of procedure cv_broadcast at line 524 col 11 changed to g1_c
 VARIABLES mutex_index, g1_orig_size_index, wrefs_index, g_signals_index, 
           g_refs_index, futexes, wseq, g1_start, g_size, did_switch_g1, 
           g1index, work_to_do, work_done, done, spinlock_locked, 
@@ -2245,8 +2235,10 @@ cv_wait_inner_loop_done(self) == /\ pc[self] = "cv_wait_inner_loop_done"
                                                  do_futex_wake, num_loops >>
 
 cv_wait_outer_loop_done(self) == /\ pc[self] = "cv_wait_outer_loop_done"
-                                 /\ TRUE
-                                 /\ pc' = [pc EXCEPT ![self] = "cv_wait_done"]
+                                 /\ local_g1_start' = [local_g1_start EXCEPT ![self] = g1_start]
+                                 /\ IF seq[self] < (g1_start \div 2) /\ (local_g1_start'[self] % 2) /= g_[self]
+                                       THEN /\ pc' = [pc EXCEPT ![self] = "cv_wait_potential_steal"]
+                                       ELSE /\ pc' = [pc EXCEPT ![self] = "cv_wait_done"]
                                  /\ UNCHANGED << mutex_index, 
                                                  g1_orig_size_index, 
                                                  wrefs_index, g_signals_index, 
@@ -2263,10 +2255,148 @@ cv_wait_outer_loop_done(self) == /\ pc[self] = "cv_wait_outer_loop_done"
                                                  local_wseq, g1, old_orig_size, 
                                                  old_g1_start, r, s, 
                                                  local_wseq_, g_, seq, signals, 
+                                                 local_wseq_c, g1_, 
+                                                 do_futex_wake_, local_wseq_cv, 
+                                                 g1_c, do_futex_wake, 
+                                                 num_loops >>
+
+cv_wait_potential_steal(self) == /\ pc[self] = "cv_wait_potential_steal"
+                                 /\ IF UsePatch
+                                       THEN /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "cv_broadcast",
+                                                                                     pc        |->  "cv_wait_done",
+                                                                                     local_wseq_cv |->  local_wseq_cv[self],
+                                                                                     g1_c      |->  g1_c[self],
+                                                                                     do_futex_wake |->  do_futex_wake[self] ] >>
+                                                                                 \o stack[self]]
+                                            /\ local_wseq_cv' = [local_wseq_cv EXCEPT ![self] = 0]
+                                            /\ g1_c' = [g1_c EXCEPT ![self] = 0]
+                                            /\ do_futex_wake' = [do_futex_wake EXCEPT ![self] = FALSE]
+                                            /\ pc' = [pc EXCEPT ![self] = "check_for_waiters"]
+                                            /\ UNCHANGED signals
+                                       ELSE /\ signals' = [signals EXCEPT ![self] = futexes[g_signals_index[g_[self]]].state]
+                                            /\ pc' = [pc EXCEPT ![self] = "cv_wait_potential_steal_loop"]
+                                            /\ UNCHANGED << stack, 
+                                                            local_wseq_cv, 
+                                                            g1_c, 
+                                                            do_futex_wake >>
+                                 /\ UNCHANGED << mutex_index, 
+                                                 g1_orig_size_index, 
+                                                 wrefs_index, g_signals_index, 
+                                                 g_refs_index, futexes, wseq, 
+                                                 g1_start, g_size, 
+                                                 did_switch_g1, g1index, 
+                                                 work_to_do, work_done, done, 
+                                                 spinlock_locked, 
+                                                 cv_spinlock_locked, 
+                                                 wait_index, val, wake_index, 
+                                                 wake_all_index, old_state_, 
+                                                 old_state_u, g, g_ref_index, 
+                                                 orig_size, old_state, 
+                                                 local_wseq, g1, old_orig_size, 
+                                                 old_g1_start, r, s, 
+                                                 local_wseq_, g_, seq, 
                                                  local_g1_start, local_wseq_c, 
                                                  g1_, do_futex_wake_, 
-                                                 local_wseq_cv, g1_c, 
-                                                 do_futex_wake, num_loops >>
+                                                 num_loops >>
+
+cv_wait_potential_steal_loop(self) == /\ pc[self] = "cv_wait_potential_steal_loop"
+                                      /\ IF g1_start = local_g1_start[self]
+                                            THEN /\ IF signals[self] % 2 /= 0
+                                                       THEN /\ pc' = [pc EXCEPT ![self] = "cv_wait_after_steal_wake"]
+                                                       ELSE /\ pc' = [pc EXCEPT ![self] = "cv_wait_potential_steal_cmp_exchg"]
+                                            ELSE /\ pc' = [pc EXCEPT ![self] = "cv_wait_after_steal_wake"]
+                                      /\ UNCHANGED << mutex_index, 
+                                                      g1_orig_size_index, 
+                                                      wrefs_index, 
+                                                      g_signals_index, 
+                                                      g_refs_index, futexes, 
+                                                      wseq, g1_start, g_size, 
+                                                      did_switch_g1, g1index, 
+                                                      work_to_do, work_done, 
+                                                      done, spinlock_locked, 
+                                                      cv_spinlock_locked, 
+                                                      stack, wait_index, val, 
+                                                      wake_index, 
+                                                      wake_all_index, 
+                                                      old_state_, old_state_u, 
+                                                      g, g_ref_index, 
+                                                      orig_size, old_state, 
+                                                      local_wseq, g1, 
+                                                      old_orig_size, 
+                                                      old_g1_start, r, s, 
+                                                      local_wseq_, g_, seq, 
+                                                      signals, local_g1_start, 
+                                                      local_wseq_c, g1_, 
+                                                      do_futex_wake_, 
+                                                      local_wseq_cv, g1_c, 
+                                                      do_futex_wake, num_loops >>
+
+cv_wait_potential_steal_cmp_exchg(self) == /\ pc[self] = "cv_wait_potential_steal_cmp_exchg"
+                                           /\ IF futexes[g_signals_index[g_[self]]].state = signals[self]
+                                                 THEN /\ futexes' = [futexes EXCEPT ![g_signals_index[g_[self]]].state = signals[self] + 2]
+                                                      /\ pc' = [pc EXCEPT ![self] = "cv_wait_after_steal_wake"]
+                                                      /\ UNCHANGED signals
+                                                 ELSE /\ signals' = [signals EXCEPT ![self] = futexes[g_signals_index[g_[self]]].state]
+                                                      /\ pc' = [pc EXCEPT ![self] = "cv_wait_potential_steal_loop"]
+                                                      /\ UNCHANGED futexes
+                                           /\ UNCHANGED << mutex_index, 
+                                                           g1_orig_size_index, 
+                                                           wrefs_index, 
+                                                           g_signals_index, 
+                                                           g_refs_index, wseq, 
+                                                           g1_start, g_size, 
+                                                           did_switch_g1, 
+                                                           g1index, work_to_do, 
+                                                           work_done, done, 
+                                                           spinlock_locked, 
+                                                           cv_spinlock_locked, 
+                                                           stack, wait_index, 
+                                                           val, wake_index, 
+                                                           wake_all_index, 
+                                                           old_state_, 
+                                                           old_state_u, g, 
+                                                           g_ref_index, 
+                                                           orig_size, 
+                                                           old_state, 
+                                                           local_wseq, g1, 
+                                                           old_orig_size, 
+                                                           old_g1_start, r, s, 
+                                                           local_wseq_, g_, 
+                                                           seq, local_g1_start, 
+                                                           local_wseq_c, g1_, 
+                                                           do_futex_wake_, 
+                                                           local_wseq_cv, g1_c, 
+                                                           do_futex_wake, 
+                                                           num_loops >>
+
+cv_wait_after_steal_wake(self) == /\ pc[self] = "cv_wait_after_steal_wake"
+                                  /\ /\ stack' = [stack EXCEPT ![self] = << [ procedure |->  "futex_wake_single",
+                                                                              pc        |->  "cv_wait_done",
+                                                                              wake_index |->  wake_index[self] ] >>
+                                                                          \o stack[self]]
+                                     /\ wake_index' = [wake_index EXCEPT ![self] = g_signals_index[g_[self]]]
+                                  /\ pc' = [pc EXCEPT ![self] = "check_for_sleepers"]
+                                  /\ UNCHANGED << mutex_index, 
+                                                  g1_orig_size_index, 
+                                                  wrefs_index, g_signals_index, 
+                                                  g_refs_index, futexes, wseq, 
+                                                  g1_start, g_size, 
+                                                  did_switch_g1, g1index, 
+                                                  work_to_do, work_done, done, 
+                                                  spinlock_locked, 
+                                                  cv_spinlock_locked, 
+                                                  wait_index, val, 
+                                                  wake_all_index, old_state_, 
+                                                  old_state_u, g, g_ref_index, 
+                                                  orig_size, old_state, 
+                                                  local_wseq, g1, 
+                                                  old_orig_size, old_g1_start, 
+                                                  r, s, local_wseq_, g_, seq, 
+                                                  signals, local_g1_start, 
+                                                  local_wseq_c, g1_, 
+                                                  do_futex_wake_, 
+                                                  local_wseq_cv, g1_c, 
+                                                  do_futex_wake, num_loops >>
 
 cv_wait_done(self) == /\ pc[self] = "cv_wait_done"
                       /\ IF AlwaysSetGRefs
@@ -2368,7 +2498,11 @@ cv_wait(self) == cv_wait_fetch_seq(self) \/ cv_wait_incr_wrefs(self)
                     \/ cv_wait_after_woken_up_dec_grefs(self)
                     \/ cv_wait_after_woken_up_reload_signals(self)
                     \/ cv_wait_inner_loop_done(self)
-                    \/ cv_wait_outer_loop_done(self) \/ cv_wait_done(self)
+                    \/ cv_wait_outer_loop_done(self)
+                    \/ cv_wait_potential_steal(self)
+                    \/ cv_wait_potential_steal_loop(self)
+                    \/ cv_wait_potential_steal_cmp_exchg(self)
+                    \/ cv_wait_after_steal_wake(self) \/ cv_wait_done(self)
                     \/ cv_wait_after_done_dec_grefs(self)
                     \/ cv_wait_retake_mutex(self)
 
@@ -3268,6 +3402,9 @@ Spec == /\ Init /\ [][Next]_vars
                                      /\ WF_vars(futex_wake_single(self))
                                      /\ WF_vars(futex_wake_all(self))
                                      /\ WF_vars(condvar_dec_grefs(self))
+                                     /\ WF_vars(condvar_acquire_lock(self))
+                                     /\ WF_vars(condvar_release_lock(self))
+                                     /\ WF_vars(condvar_quiesce_and_switch_g1(self))                                     /\ WF_vars(cv_broadcast(self))
         /\ \A self \in GeneratorProcs : /\ WF_vars((pc[self] # "maybe_generate_work") /\ GeneratorProc(self))
                                         /\ WF_vars(add_work(self))
                                         /\ WF_vars(lock_mutex(self))
@@ -3318,5 +3455,5 @@ ShutdownCorrectly == done = GeneratorProcs ~> (\A self \in ProcSet : pc[self] = 
 
 =============================================================================
 \* Modification History
-\* Last modified Tue Oct 27 22:39:42 EDT 2020 by malte
+\* Last modified Sat Aug 13 10:32:07 EDT 2022 by malte
 \* Created Mon Oct 12 21:12:21 EDT 2020 by malte
